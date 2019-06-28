@@ -1,0 +1,157 @@
+kind: PersistentVolume
+apiVersion: v1
+metadata:
+  name: fcrepo-pv-volume
+  labels:
+    type: local
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/mnt/data"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fcrepo-pv-claim
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+kind: PersistentVolume
+apiVersion: v1
+metadata:
+  name: db-pv-volume
+  labels:
+    type: local
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/mnt/db"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-pv-claim
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  ports:
+  - port: 5432
+  selector:
+    app: postgres
+  clusterIP: None
+---
+apiVersion: apps/v1 # for versions before 1.9.0 use apps/v1beta2
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  selector:
+    matchLabels:
+      app: postgres
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - image: postgres:9
+        name: postgres
+        env:
+          # Use secret in real usage
+        - name: POSTGRES_USER
+          value: fcrepoadmin
+        - name: POSTGRES_PASSWORD
+          value: fcrepoadminpw
+        - name: POSTGRES_DB
+          value: fcrepo
+        ports:
+        - containerPort: 5432
+          name: postgres
+        volumeMounts:
+        - name: postgres-persistent-storage
+          mountPath: /var/lib/postgres
+      volumes:
+      - name: postgres-persistent-storage
+        persistentVolumeClaim:
+          claimName: db-pv-claim
+---
+apiVersion: v1
+kind: Service
+metadata:
+  creationTimestamp: null
+  labels:
+    run: fcrepo
+  name: fcrepo
+spec:
+  ports:
+  - port: 8080
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    run: fcrepo
+  type: LoadBalancer
+status:
+  loadBalancer: {}
+---
+apiVersion: apps/v1beta1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    run: fcrepo
+  name: fcrepo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      run: fcrepo
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        run: fcrepo
+    spec:
+      initContainers:
+      - name: init-wait
+        image: busybox
+        command: ["sh", "-c", "for i in $(seq 1 300); do nc -zvw1 postgres 5432 && exit 0 || sleep 3; done; exit 1"]
+      containers:
+      - image: yinlinchen/fcrepo-images:fcrepo-postgres-5.0.2
+        name: fcrepo
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - name: fcrepo-persistent-storage
+          mountPath: /mnt/ingest
+        resources: {}
+      volumes:
+      - name: fcrepo-persistent-storage
+        persistentVolumeClaim:
+          claimName: fcrepo-pv-claim
+status: {}
